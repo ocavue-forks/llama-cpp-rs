@@ -843,7 +843,7 @@ fn main() {
     // Use the ClangCL toolset that Visual Studio ships instead (it needs the
     // "C++ Clang tools for Windows" component). This only applies to the Visual
     // Studio generator, and a toolset, toolchain file or compiler set by the user wins.
-    if matches!(target_os, TargetOs::Windows(WindowsVariant::Msvc))
+    let use_clang_cl_toolset = matches!(target_os, TargetOs::Windows(WindowsVariant::Msvc))
         && target_arch == "aarch64"
         && target_cpu != Some("native".into())
         && env_for_target("CMAKE_GENERATOR", &target_triple)
@@ -855,8 +855,8 @@ fn main() {
             "CXX",
         ]
         .iter()
-        .all(|var| env_for_target(var, &target_triple).is_none())
-    {
+        .all(|var| env_for_target(var, &target_triple).is_none());
+    if use_clang_cl_toolset {
         debug_log!("Compiling for aarch64 MSVC with the ClangCL toolset");
         config.generator_toolset("ClangCL");
     }
@@ -1025,7 +1025,14 @@ fn main() {
     // Android doesn't have OpenMP support AFAICT and openmp is a default feature. Do this here
     // rather than modifying the defaults in Cargo.toml just in case someone enables the OpenMP feature
     // and tries to build for Android anyway.
-    if cfg!(feature = "openmp") && !matches!(target_os, TargetOs::Android | TargetOs::Emscripten) {
+    //
+    // With the ClangCL toolset, OpenMP links the `libomp.lib` of MSVC's `/openmp:llvm`,
+    // whose runtime DLL is not on PATH and would have to ship with the app. Use ggml's
+    // own thread pool there instead.
+    if cfg!(feature = "openmp")
+        && !matches!(target_os, TargetOs::Android | TargetOs::Emscripten)
+        && !use_clang_cl_toolset
+    {
         config.define("GGML_OPENMP", "ON");
     } else {
         config.define("GGML_OPENMP", "OFF");
