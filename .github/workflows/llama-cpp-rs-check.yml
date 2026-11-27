@@ -132,6 +132,12 @@ jobs:
           echo "CXX=${{ matrix.cc }}" >> "$GITHUB_ENV"
           # The Visual Studio generator ignores CC/CXX and always uses cl.exe
           echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
+      - name: Add the Visual Studio LLVM runtime (libomp.dll) to PATH
+        if: matrix.name == 'msvc arm64'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          "$vs\VC\Tools\Llvm\ARM64\bin" >> $env:GITHUB_PATH
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
