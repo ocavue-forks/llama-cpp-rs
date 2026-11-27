@@ -110,6 +110,8 @@ jobs:
         include:
           - name: msvc
             os: windows-latest
+          - name: msvc arm64
+            os: windows-11-arm
           - name: clang-cl
             os: windows-latest
             cc: clang-cl.exe

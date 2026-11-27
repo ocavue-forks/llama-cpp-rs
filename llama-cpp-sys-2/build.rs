@@ -56,6 +56,28 @@ fn emit_compiler_static_archive_search_path(archive: &str) {
     }
 }
 
+/// Reads an environment variable with the same target lookup as the `cmake` and `cc`
+/// crates: `<VAR>_<target>`, `<VAR>_<target_with_underscores>`, `TARGET_<VAR>` (or
+/// `HOST_<VAR>`), then `<VAR>`.
+fn env_for_target(var: &str, target: &str) -> Option<String> {
+    let kind = if env::var("HOST").as_deref() == Ok(target) {
+        "HOST"
+    } else {
+        "TARGET"
+    };
+    [
+        format!("{var}_{target}"),
+        format!("{var}_{}", target.replace('-', "_")),
+        format!("{kind}_{var}"),
+        var.to_string(),
+    ]
+    .iter()
+    .find_map(|key| {
+        println!("cargo:rerun-if-env-changed={key}");
+        env::var(key).ok()
+    })
+}
+
 fn parse_target_os() -> Result<(TargetOs, String), String> {
     let target = env::var("TARGET").unwrap();
 
@@ -813,6 +835,32 @@ fn main() {
         }
     }
 
+    // MSVC proper (cl.exe) has no -mcpu/-march for Arm, and ggml rejects it unless
+    // GGML_NATIVE is on:
+    //     "MSVC on ARM requires GGML_NATIVE=ON, use clang for GGML_CPU_ARM_ARCH / GGML_CPU_ALL_VARIANTS"
+    // (ggml/src/ggml-cpu/CMakeLists.txt). GGML_NATIVE stays off unless
+    // `target-cpu=native`, so a default aarch64 MSVC build fails at configure time.
+    // Use the ClangCL toolset that Visual Studio ships instead (it needs the
+    // "C++ Clang tools for Windows" component). This only applies to the Visual
+    // Studio generator, and a toolset, toolchain file or compiler set by the user wins.
+    let use_clang_cl_toolset = matches!(target_os, TargetOs::Windows(WindowsVariant::Msvc))
+        && target_arch == "aarch64"
+        && target_cpu != Some("native".into())
+        && env_for_target("CMAKE_GENERATOR", &target_triple)
+            .is_none_or(|generator| generator.starts_with("Visual Studio"))
+        && [
+            "CMAKE_GENERATOR_TOOLSET",
+            "CMAKE_TOOLCHAIN_FILE",
+            "CC",
+            "CXX",
+        ]
+        .iter()
+        .all(|var| env_for_target(var, &target_triple).is_none());
+    if use_clang_cl_toolset {
+        debug_log!("Compiling for aarch64 MSVC with the ClangCL toolset");
+        config.generator_toolset("ClangCL");
+    }
+
     if cfg!(feature = "vulkan") {
         config.define("GGML_VULKAN", "ON");
         match target_os {
@@ -977,7 +1025,14 @@ fn main() {
     // Android doesn't have OpenMP support AFAICT and openmp is a default feature. Do this here
     // rather than modifying the defaults in Cargo.toml just in case someone enables the OpenMP feature
     // and tries to build for Android anyway.
-    if cfg!(feature = "openmp") && !matches!(target_os, TargetOs::Android | TargetOs::Emscripten) {
+    //
+    // With the ClangCL toolset, OpenMP links the `libomp.lib` of MSVC's `/openmp:llvm`,
+    // whose runtime DLL is not on PATH and would have to ship with the app. Use ggml's
+    // own thread pool there instead.
+    if cfg!(feature = "openmp")
+        && !matches!(target_os, TargetOs::Android | TargetOs::Emscripten)
+        && !use_clang_cl_toolset
+    {
         config.define("GGML_OPENMP", "ON");
     } else {
         config.define("GGML_OPENMP", "OFF");
