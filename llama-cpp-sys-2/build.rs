@@ -843,7 +843,7 @@ fn main() {
     // Use the ClangCL toolset that Visual Studio ships instead (it needs the
     // "C++ Clang tools for Windows" component). This only applies to the Visual
     // Studio generator, and a toolset, toolchain file or compiler set by the user wins.
-    let use_clang_cl_toolset = matches!(target_os, TargetOs::Windows(WindowsVariant::Msvc))
+    if matches!(target_os, TargetOs::Windows(WindowsVariant::Msvc))
         && target_arch == "aarch64"
         && target_cpu != Some("native".into())
         && env_for_target("CMAKE_GENERATOR", &target_triple)
@@ -855,8 +855,8 @@ fn main() {
             "CXX",
         ]
         .iter()
-        .all(|var| env_for_target(var, &target_triple).is_none());
-    if use_clang_cl_toolset {
+        .all(|var| env_for_target(var, &target_triple).is_none())
+    {
         debug_log!("Compiling for aarch64 MSVC with the ClangCL toolset");
         config.generator_toolset("ClangCL");
     }
@@ -1328,21 +1328,8 @@ fn main() {
             println!("cargo:rustc-link-lib=advapi32");
             // clang-cl compiles with LLVM OpenMP, which doesn't auto-link its
             // runtime like cl.exe does with vcomp.
-            if cfg!(feature = "openmp")
-                && (use_clang_cl_toolset || cc::Build::new().get_compiler().is_like_clang_cl())
-            {
+            if cfg!(feature = "openmp") && cc::Build::new().get_compiler().is_like_clang_cl() {
                 emit_compiler_static_archive_search_path("libomp.lib");
-                // The ClangCL toolset's clang-cl is not the `cc` compiler, so take the
-                // libomp directory that CMake's FindOpenMP found.
-                let cmake_cache = build_dir.join("build").join("CMakeCache.txt");
-                if let Some(libomp_dir) = std::fs::read_to_string(cmake_cache)
-                    .unwrap_or_default()
-                    .lines()
-                    .find_map(|line| line.strip_prefix("OpenMP_libomp_LIBRARY:FILEPATH="))
-                    .and_then(|path| Path::new(path).parent())
-                {
-                    println!("cargo:rustc-link-search=native={}", libomp_dir.display());
-                }
                 if cfg!(feature = "static-openmp") {
                     println!("cargo:rustc-link-lib=static=libomp");
                 } else {
